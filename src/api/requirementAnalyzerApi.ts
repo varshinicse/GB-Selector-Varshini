@@ -13,13 +13,17 @@ export interface ExtractionResult {
  * Sends extracted specifications text to the backend proxy for AI analysis.
  * This is decoupled from the UI to support future integrations with ERP/CRM.
  */
-export async function analyzeRequirement(text: string): Promise<ExtractionResult> {
+export async function analyzeRequirement(
+  text: string,
+  fileData?: string | null,
+  mimeType?: string | null
+): Promise<ExtractionResult> {
   const response = await fetch('/api/analyze-requirement', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, fileData, mimeType }),
   });
 
   if (!response.ok) {

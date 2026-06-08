@@ -125,24 +125,48 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     });
   };
 
+  const getBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
   const handleAnalyze = async () => {
     let sourceText = text;
+    let fileBase64: string | null = null;
+    let fileMime: string | null = null;
 
     if (file) {
       setLoading(true);
       setUploadStatus("Extracting raw text from file...");
       try {
         sourceText = await extractTextFromFile(file);
-        setUploadStatus("File text extracted successfully. Process starting...");
+        setUploadStatus("File text extracted. Reading binary data...");
+      } catch (err) {
+        console.warn("Client-side text extraction failed, proceeding with visual/multimodal analysis...", err);
+        sourceText = "";
+        setUploadStatus("No readable text found. Reading binary data for visual analysis...");
+      }
+      try {
+        fileBase64 = await getBase64(file);
+        fileMime = file.type || 'application/pdf';
+        setUploadStatus("File read successfully. Process starting...");
       } catch (err) {
         console.error(err);
-        alert(`Failed to extract text from file: ${(err as any).message}`);
+        alert(`Failed to read file binary: ${(err as any).message}`);
         setLoading(false);
         return;
       }
     }
 
-    if (!sourceText.trim()) {
+    if (!sourceText.trim() && !fileBase64) {
       alert("Please enter a description or upload a specifications document.");
       setLoading(false);
       return;
@@ -155,7 +179,9 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     try {
       let result: ExtractionResult;
       try {
-        result = await timeoutPromise(analyzeRequirement(sourceText), 450);
+        // Give Gemini longer timeout (8 seconds) if a PDF file is uploaded directly to allow multimodal processing
+        const timeoutMs = file ? 8000 : 3500;
+        result = await timeoutPromise(analyzeRequirement(sourceText, fileBase64, fileMime), timeoutMs);
       } catch (apiError) {
         console.warn("AI extraction endpoint failed, timed out, or unavailable. Falling back to local rules engine...", apiError);
         result = {

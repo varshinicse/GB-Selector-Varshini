@@ -20,10 +20,10 @@ if (!apiKey) {
 const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
 
 app.post('/api/analyze-requirement', async (req, res) => {
-  const { text } = req.body;
+  const { text, fileData, mimeType } = req.body;
 
-  if (!text) {
-    return res.status(400).json({ error: "Missing requirement 'text' parameter." });
+  if (!text && !fileData) {
+    return res.status(400).json({ error: "Missing requirement 'text' or 'fileData' parameter." });
   }
 
   if (!genAI) {
@@ -38,7 +38,8 @@ app.post('/api/analyze-requirement', async (req, res) => {
 
     const prompt = `
 You are an industrial gearbox engineering assistant.
-Extract gearbox selection parameters from the provided document.
+Extract gearbox selection parameters from the provided document (which may contain text, tables, design diagrams, drawings, or blueprints) and/or the text description.
+Carefully examine any visual details, tabular data, text values, and motor details in the attached document.
 Return ONLY valid JSON matching this schema:
 {
   "projectName": string or null,
@@ -62,13 +63,22 @@ Rules:
    Fan = 1.25
    Pump = 1.25
 3. If a field is unknown, return null.
-4. Return JSON only.
+4. Return JSON only. Do not wrap in markdown blocks.
 
-Document Text:
----
-${text}
----
+${text ? `Text Description/Extracted Text:\n---\n${text}\n---` : ''}
 `;
+
+    // Construct the parts array for multimodal/visual Gemini analysis
+    const parts = [];
+    if (fileData && mimeType) {
+      parts.push({
+        inlineData: {
+          data: fileData,
+          mimeType: mimeType
+        }
+      });
+    }
+    parts.push({ text: prompt });
 
     let result;
     let attempts = 0;
@@ -79,7 +89,7 @@ ${text}
       try {
         attempts++;
         result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', parts: parts }],
           generationConfig: {
             responseMimeType: "application/json"
           }
