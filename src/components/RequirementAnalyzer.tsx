@@ -16,6 +16,10 @@ import {
   seriesLimits, 
   EngineeringReport
 } from '../services/engineeringReasoningEngine';
+import { 
+  verifyEngineeringReport, 
+  VerificationReport 
+} from '../services/verificationEngine';
 
 interface RequirementAnalyzerProps {
   onAutoFill: (extractedValues: Partial<ProjectInput>) => void;
@@ -27,7 +31,8 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
   const [loading, setLoading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>('');
   const [reasoningResult, setReasoningResult] = useState<EngineeringReport | null>(null);
-  const [activeTab, setActiveTab] = useState<'rec' | 'validation' | 'params' | 'trace' | 'limits'>('rec');
+  const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
+  const [activeTab, setActiveTab] = useState<'rec' | 'validation' | 'params' | 'trace' | 'limits' | 'verification'>('rec');
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +81,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     setFile(selectedFile);
     setText('');
     setReasoningResult(null);
+    setVerificationReport(null);
     setUploadStatus('File uploaded. Click "Analyze Requirement" to extract.');
   };
 
@@ -126,6 +132,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
 
     setLoading(true);
     setReasoningResult(null);
+    setVerificationReport(null);
     
     try {
       let result: ExtractionResult;
@@ -146,7 +153,9 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
       }
       
       const solution = generateAuditReport(sourceText, result);
+      const verification = verifyEngineeringReport(solution);
       setReasoningResult(solution);
+      setVerificationReport(verification);
       setActiveTab('rec');
       if (file) {
         setUploadStatus("Engineering solution generated successfully!");
@@ -167,10 +176,15 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     setFile(null);
     setUploadStatus('');
     setReasoningResult(null);
+    setVerificationReport(null);
   };
 
   const handleAutoFillClick = () => {
     if (reasoningResult && reasoningResult.validation.isValid) {
+      if (verificationReport?.blockRecommendation) {
+        alert("Action blocked: This drivetrain configuration has failed engineering verification checks. Please check the Verification tab for details.");
+        return;
+      }
       onAutoFill({
         projectName: reasoningResult.projectName,
         powerKW: reasoningResult.powerKW.value,
@@ -690,75 +704,106 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                     <Database className="h-3.5 w-3.5" />
                     Limits Matrix
                   </button>
+                  <button
+                    onClick={() => setActiveTab('verification')}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                      activeTab === 'verification'
+                        ? 'bg-slate-900 text-white shadow-sm'
+                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                    }`}
+                  >
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Verification
+                  </button>
                 </div>
 
                 {/* Tab Contents */}
                 <div className="flex-1 overflow-y-auto max-h-[380px] pr-1 space-y-4">
-                  
-                  {/* TAB 1: RECOMMENDATION */}
+                    {/* TAB 1: RECOMMENDATION */}
                   {activeTab === 'rec' && (
                     <div className="space-y-4">
-                      {/* Spotlight Card */}
-                      <div className="bg-slate-900 border border-slate-800 text-white p-4.5 rounded-xl shadow-md flex items-center justify-between">
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-bold text-slate-450 uppercase tracking-widest font-mono">Recommended output model</span>
-                          <h4 className="text-xl font-black text-[#ff8c00] tracking-wide">
-                            {reasoningResult.validation.isValid && reasoningResult.stageTraces.length > 0
-                              ? reasoningResult.stageTraces[reasoningResult.stageTraces.length - 1].selectedGearbox.size
-                              : 'Review Warnings'}
-                          </h4>
-                          <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
-                            <Info className="h-3 w-3 text-slate-450" />
-                            Deterministic size resolved from database
+                      {verificationReport?.blockRecommendation ? (
+                        /* FAIL SAFE BLOCK (Stage 8) */
+                        <div className="bg-red-50 border border-red-200 p-5 rounded-xl text-center space-y-3 shadow-xs">
+                          <AlertTriangle className="h-10 w-10 text-red-500 mx-auto animate-bounce" />
+                          <h4 className="text-md font-bold text-red-800 uppercase tracking-wide">Engineering Review Required</h4>
+                          <p className="text-xs text-red-700 font-semibold leading-relaxed">
+                            The verification engine has blocked this drivetrain configuration. The safety margins, overload ratios, or calculated values did not pass the independent engineering review.
                           </p>
-                        </div>
-                        <div className="text-right">
-                          <Badge className={`${reasoningResult.validation.isValid && reasoningResult.stageTraces.every(t => t.safetyFactor >= 1.0) ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'} text-white font-extrabold px-3 py-1 text-xs shadow`}>
-                            {reasoningResult.validation.isValid && reasoningResult.stageTraces.every(t => t.safetyFactor >= 1.0) ? '⚡ Drive Compliant' : '⚠ Action Required'}
-                          </Badge>
-                          <div className="text-[10.5px] font-bold text-slate-400 mt-1">
-                            Stages: {reasoningResult.stages.value} Planetary
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Stage flow visualizer */}
-                      {reasoningResult.validation.isValid && (
-                        <div className="bg-slate-100/50 border border-slate-200 p-4 rounded-xl space-y-2">
-                          <div className="text-[10px] font-bold uppercase text-slate-450 tracking-wider flex items-center gap-1 font-mono">
-                            <Settings className="h-3 w-3" />
-                            Drivetrain sequence
-                          </div>
-                          <div className="flex items-center gap-2 py-1 overflow-x-auto">
-                            <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
-                              <div className="text-[8px] font-extrabold text-slate-450 uppercase">Input Motor</div>
-                              <div className="font-extrabold text-slate-700 mt-0.5">{reasoningResult.inputRPM.value} RPM</div>
-                              <div className="text-[8.5px] font-bold text-[#ff8c00] mt-0.5">{reasoningResult.powerKW.value} kW</div>
-                            </div>
-                            {reasoningResult.stageTraces.map((d, idx) => (
-                              <React.Fragment key={idx}>
-                                <ArrowRight className="h-3.5 w-3.5 text-slate-350 shrink-0 animate-pulse" />
-                                <div className="bg-white border border-[#ff8c00]/30 px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
-                                  <div className="text-[8px] font-extrabold text-slate-450 uppercase">Stage {d.stage} ({d.selectedGearbox.series === 1 ? 'S1' : d.selectedGearbox.series === 2 ? 'S2' : d.selectedGearbox.series === 3 ? 'S3' : 'S4'})</div>
-                                  <div className="font-extrabold text-slate-800 mt-0.5">{d.selectedGearbox.size}</div>
-                                  <div className="text-[8.5px] font-bold text-[#ff8c00]">R: {d.ratio.toFixed(2)}</div>
-                                </div>
-                              </React.Fragment>
+                          <div className="text-left bg-white border border-red-150 p-3.5 rounded-lg text-[10.5px] font-mono text-slate-700 space-y-1.5 max-h-[140px] overflow-y-auto shadow-inner">
+                            {verificationReport.anomalies.map((err, idx) => (
+                              <div key={idx} className="text-red-650 flex items-start gap-1">
+                                <span className="text-red-500 shrink-0 font-bold">•</span>
+                                <span>{err}</span>
+                              </div>
                             ))}
-                            <ArrowRight className="h-3.5 w-3.5 text-slate-350 shrink-0" />
-                            <div className="bg-slate-900 border border-slate-900 text-white px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
-                              <div className="text-[8px] font-extrabold text-slate-400 uppercase">Output Drive</div>
-                              <div className="font-extrabold text-white mt-0.5">{reasoningResult.outputRPM.value.toFixed(1)} RPM</div>
-                              <div className="text-[8.5px] font-bold text-[#ff8c00] mt-0.5">{Math.round(reasoningResult.overallOutputTorque).toLocaleString()} N·m</div>
-                            </div>
                           </div>
                         </div>
-                      )}
+                      ) : (
+                        <>
+                          {/* Spotlight Card */}
+                          <div className="bg-slate-900 border border-slate-800 text-white p-4.5 rounded-xl shadow-md flex items-center justify-between">
+                            <div className="space-y-1">
+                              <span className="text-[9px] font-bold text-slate-450 uppercase tracking-widest font-mono">Recommended output model</span>
+                              <h4 className="text-xl font-black text-[#ff8c00] tracking-wide">
+                                {reasoningResult.validation.isValid && reasoningResult.stageTraces.length > 0
+                                  ? reasoningResult.stageTraces[reasoningResult.stageTraces.length - 1].selectedGearbox.size
+                                  : 'Review Warnings'}
+                              </h4>
+                              <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1">
+                                <Info className="h-3 w-3 text-slate-450" />
+                                Deterministic size resolved from database
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <Badge className={`${reasoningResult.validation.isValid && reasoningResult.stageTraces.every(t => t.safetyFactor >= 1.0) ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'} text-white font-extrabold px-3 py-1 text-xs shadow`}>
+                                {reasoningResult.validation.isValid && reasoningResult.stageTraces.every(t => t.safetyFactor >= 1.0) ? '⚡ Drive Compliant' : '⚠ Action Required'}
+                              </Badge>
+                              <div className="text-[10.5px] font-bold text-slate-400 mt-1">
+                                Stages: {reasoningResult.stages.value} Planetary
+                              </div>
+                            </div>
+                          </div>
 
-                      {/* Text Output */}
-                      <div className="text-xs text-slate-650 leading-relaxed font-medium bg-white border border-slate-150 p-4 rounded-xl shadow-xs whitespace-pre-line">
-                        {reasoningResult.finalRecommendation}
-                      </div>
+                          {/* Stage flow visualizer */}
+                          {reasoningResult.validation.isValid && (
+                            <div className="bg-slate-100/50 border border-slate-200 p-4 rounded-xl space-y-2">
+                              <div className="text-[10px] font-bold uppercase text-slate-450 tracking-wider flex items-center gap-1 font-mono">
+                                <Settings className="h-3 w-3" />
+                                Drivetrain sequence
+                              </div>
+                              <div className="flex items-center gap-2 py-1 overflow-x-auto">
+                                <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
+                                  <div className="text-[8px] font-extrabold text-slate-450 uppercase">Input Motor</div>
+                                  <div className="font-extrabold text-slate-700 mt-0.5">{reasoningResult.inputRPM.value} RPM</div>
+                                  <div className="text-[8.5px] font-bold text-[#ff8c00] mt-0.5">{reasoningResult.powerKW.value} kW</div>
+                                </div>
+                                {reasoningResult.stageTraces.map((d, idx) => (
+                                  <React.Fragment key={idx}>
+                                    <ArrowRight className="h-3.5 w-3.5 text-slate-350 shrink-0 animate-pulse" />
+                                    <div className="bg-white border border-[#ff8c00]/30 px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
+                                      <div className="text-[8px] font-extrabold text-slate-450 uppercase">Stage {d.stage} ({d.selectedGearbox.series === 1 ? 'S1' : d.selectedGearbox.series === 2 ? 'S2' : d.selectedGearbox.series === 3 ? 'S3' : 'S4'})</div>
+                                      <div className="font-extrabold text-slate-800 mt-0.5">{d.selectedGearbox.size}</div>
+                                      <div className="text-[8.5px] font-bold text-[#ff8c00]">R: {d.ratio.toFixed(2)}</div>
+                                    </div>
+                                  </React.Fragment>
+                                ))}
+                                <ArrowRight className="h-3.5 w-3.5 text-slate-350 shrink-0" />
+                                <div className="bg-slate-900 border border-slate-900 text-white px-3 py-1.5 rounded-lg text-center shadow-xs text-xs shrink-0">
+                                  <div className="text-[8px] font-extrabold text-slate-450 uppercase">Output Drive</div>
+                                  <div className="font-extrabold text-white mt-0.5">{reasoningResult.outputRPM.value.toFixed(1)} RPM</div>
+                                  <div className="text-[8.5px] font-bold text-[#ff8c00] mt-0.5">{Math.round(reasoningResult.overallOutputTorque).toLocaleString()} N·m</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Text Output */}
+                          <div className="text-xs text-slate-650 leading-relaxed font-medium bg-white border border-slate-150 p-4 rounded-xl shadow-xs whitespace-pre-line">
+                            {reasoningResult.finalRecommendation}
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -1238,6 +1283,115 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                                   </tr>
                                 );
                               })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TAB 6: VERIFICATION & RELIABILITY */}
+                  {activeTab === 'verification' && verificationReport && (
+                    <div className="space-y-4">
+                      {/* Overall Engineering Reliability Score */}
+                      <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-xs space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider font-mono">
+                            Overall Engineering Reliability
+                          </span>
+                          <span className={`text-sm font-black px-2.5 py-0.5 rounded-full ${
+                            verificationReport.overallScore === 100
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {verificationReport.overallScore}% Health
+                          </span>
+                        </div>
+                        <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden shadow-inner">
+                          <div 
+                            className={`h-full transition-all duration-500 ${
+                              verificationReport.overallScore === 100 ? 'bg-emerald-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${verificationReport.overallScore}%` }}
+                          />
+                        </div>
+                        <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
+                          {verificationReport.overallScore === 100 
+                            ? "✓ All independent mechanical recalculations, database integrity constraints, and sizing validations have passed without warnings or deviations." 
+                            : "❌ Verification alerts detected. Critical formula deviation, capacity overloading, or database validation mismatch has triggered a fail-safe review block."}
+                        </p>
+                      </div>
+
+                      {/* Six Verification Nodes Checklist */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {[
+                          verificationReport.formulaVerification,
+                          verificationReport.ratioVerification,
+                          verificationReport.torqueVerification,
+                          verificationReport.gearboxSelectionVerification,
+                          verificationReport.safetyFactorVerification,
+                          verificationReport.databaseVerification
+                        ].map((node, index) => (
+                          <div key={index} className={`border p-3 rounded-xl flex items-start gap-2.5 shadow-xs transition-colors ${
+                            node.passed 
+                              ? 'border-emerald-150 bg-emerald-50/10' 
+                              : 'border-red-150 bg-red-50/10'
+                          }`}>
+                            {node.passed ? (
+                              <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+                            ) : (
+                              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5 animate-pulse" />
+                            )}
+                            <div className="space-y-0.5">
+                              <div className={`text-xs font-extrabold ${node.passed ? 'text-slate-800' : 'text-red-800'}`}>
+                                {node.name}
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-semibold leading-normal">
+                                {node.message}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Independent Recalculation Audit Logs Table */}
+                      <div className="space-y-2">
+                        <div className="text-[10px] font-bold text-slate-450 uppercase tracking-wider font-mono">
+                          Independent Recalculation Audit Logs
+                        </div>
+                        <div className="border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-slate-900 text-slate-200">
+                                <th className="p-2.5 font-extrabold">Audit Parameter</th>
+                                <th className="p-2.5 font-extrabold text-right">Original</th>
+                                <th className="p-2.5 font-extrabold text-right">Recomputed</th>
+                                <th className="p-2.5 font-extrabold text-right">Dev (%)</th>
+                                <th className="p-2.5 font-extrabold text-center">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-150 bg-white">
+                              {verificationReport.calculationsAudited.map((calc, idx) => (
+                                <tr key={idx} className="hover:bg-slate-50/50">
+                                  <td className="p-2.5 font-extrabold text-slate-700">{calc.name}</td>
+                                  <td className="p-2.5 text-right font-mono text-slate-600">{calc.original}</td>
+                                  <td className="p-2.5 text-right font-mono text-slate-600">{calc.recomputed}</td>
+                                  <td className={`p-2.5 text-right font-mono font-bold ${calc.errorPct > 0.1 ? 'text-red-650' : 'text-slate-600'}`}>
+                                    {calc.errorPct.toFixed(3)}%
+                                  </td>
+                                  <td className="p-2.5 text-center">
+                                    {calc.passed ? (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        Pass
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-50 text-red-700 border border-red-200">
+                                        Fail
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>
