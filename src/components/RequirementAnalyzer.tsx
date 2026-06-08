@@ -153,7 +153,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
       }
       
       const solution = generateAuditReport(sourceText, result);
-      const verification = verifyEngineeringReport(solution);
+      const verification = verifyEngineeringReport(solution, result);
       setReasoningResult(solution);
       setVerificationReport(verification);
       setActiveTab('rec');
@@ -181,7 +181,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
 
   const handleAutoFillClick = () => {
     if (reasoningResult && reasoningResult.validation.isValid) {
-      if (verificationReport?.blockRecommendation) {
+      if (verificationReport && verificationReport.criticalFailures.length > 0) {
         alert("Action blocked: This drivetrain configuration has failed engineering verification checks. Please check the Verification tab for details.");
         return;
       }
@@ -722,8 +722,33 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                     {/* TAB 1: RECOMMENDATION */}
                   {activeTab === 'rec' && (
                     <div className="space-y-4">
-                      {verificationReport?.blockRecommendation ? (
-                        /* FAIL SAFE BLOCK (Stage 8) */
+                      {verificationReport?.isMissingInputsCritical ? (
+                        /* Case 1: Additional Engineering Inputs Required */
+                        <div className="bg-[#ff8c00]/5 border border-[#ff8c00]/30 p-5 rounded-xl text-center space-y-3 shadow-xs">
+                          <AlertTriangle className="h-10 w-10 text-[#ff8c00] mx-auto animate-pulse" />
+                          <h4 className="text-md font-bold text-slate-800 uppercase tracking-wide">Additional Engineering Inputs Required</h4>
+                          <p className="text-xs text-slate-650 font-semibold leading-relaxed">
+                            Crucial reduction limits or speeds could not be resolved. Please provide more detailed gearbox operating parameters.
+                          </p>
+                          <div className="text-left bg-white border border-slate-200 p-3.5 rounded-lg text-xs text-slate-700 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">
+                            <div className="font-extrabold text-slate-800">Missing Parameters:</div>
+                            {verificationReport.missingInputs.map((param, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5 font-bold text-slate-650">
+                                <span className="text-[#ff8c00] font-black">•</span>
+                                <span>{param}</span>
+                              </div>
+                            ))}
+                            <div className="pt-2 border-t border-slate-100 font-bold text-slate-700">
+                              Please provide either:
+                              <ul className="list-disc list-inside mt-1 font-semibold text-slate-650 space-y-0.5">
+                                <li>Required Output Speed (RPM)</li>
+                                <li>Required Reduction Ratio (Ratio)</li>
+                              </ul>
+                            </div>
+                          </div>
+                        </div>
+                      ) : verificationReport?.blockRecommendation ? (
+                        /* Case 3: Engineering Review Required (Critical Failure) */
                         <div className="bg-red-50 border border-red-200 p-5 rounded-xl text-center space-y-3 shadow-xs">
                           <AlertTriangle className="h-10 w-10 text-red-500 mx-auto animate-bounce" />
                           <h4 className="text-md font-bold text-red-800 uppercase tracking-wide">Engineering Review Required</h4>
@@ -731,7 +756,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                             The verification engine has blocked this drivetrain configuration. The safety margins, overload ratios, or calculated values did not pass the independent engineering review.
                           </p>
                           <div className="text-left bg-white border border-red-150 p-3.5 rounded-lg text-[10.5px] font-mono text-slate-700 space-y-1.5 max-h-[140px] overflow-y-auto shadow-inner">
-                            {verificationReport.anomalies.map((err, idx) => (
+                            {verificationReport.criticalFailures.map((err, idx) => (
                               <div key={idx} className="text-red-650 flex items-start gap-1">
                                 <span className="text-red-500 shrink-0 font-bold">•</span>
                                 <span>{err}</span>
@@ -741,6 +766,24 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                         </div>
                       ) : (
                         <>
+                          {/* Case 2 / Normal Warnings Banner */}
+                          {verificationReport && verificationReport.warnings.length > 0 && (
+                            <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-xl flex items-start gap-2 text-xs text-amber-800 font-semibold shadow-xs">
+                              <AlertTriangle className="h-4.5 w-4.5 text-amber-600 shrink-0 mt-0.5" />
+                              <div className="space-y-1">
+                                <div className="font-extrabold uppercase tracking-wider text-[10px] text-amber-900">Engineering Warning</div>
+                                <div className="space-y-0.5 text-amber-850">
+                                  {verificationReport.warnings.map((wrn, idx) => (
+                                    <div key={idx} className="flex items-start gap-1">
+                                      <span>•</span>
+                                      <span>{wrn}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="text-[10px] text-amber-700 font-bold mt-1">Note: Warnings have no impact on structural calculations or selection compliance.</div>
+                              </div>
+                            </div>
+                          )}
                           {/* Spotlight Card */}
                           <div className="bg-slate-900 border border-slate-800 text-white p-4.5 rounded-xl shadow-md flex items-center justify-between">
                             <div className="space-y-1">
@@ -1316,11 +1359,87 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                           />
                         </div>
                         <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
-                          {verificationReport.overallScore === 100 
-                            ? "✓ All independent mechanical recalculations, database integrity constraints, and sizing validations have passed without warnings or deviations." 
-                            : "❌ Verification alerts detected. Critical formula deviation, capacity overloading, or database validation mismatch has triggered a fail-safe review block."}
+                          {verificationReport.criticalFailures.length === 0
+                            ? "✓ All independent mechanical recalculations, database integrity constraints, and sizing validations have passed without critical failures." 
+                            : `❌ ${verificationReport.criticalFailures.length} critical verification failure(s) detected. Sizing recommendations are blocked until resolved.`}
                         </p>
                       </div>
+
+                      {/* Severity Counts Grid */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="bg-blue-50/20 border border-blue-150 p-2.5 rounded-xl text-center shadow-xs">
+                          <span className="text-[9px] font-bold text-blue-600 uppercase tracking-wider font-mono">INFO</span>
+                          <div className="text-lg font-black text-blue-800 mt-0.5">{verificationReport.infos.length}</div>
+                        </div>
+                        <div className="bg-amber-50/20 border border-amber-150 p-2.5 rounded-xl text-center shadow-xs">
+                          <span className="text-[9px] font-bold text-amber-600 uppercase tracking-wider font-mono">WARNINGS</span>
+                          <div className="text-lg font-black text-amber-800 mt-0.5">{verificationReport.warnings.length}</div>
+                        </div>
+                        <div className="bg-[#ff8c00]/5 border border-[#ff8c00]/20 p-2.5 rounded-xl text-center shadow-xs">
+                          <span className="text-[9px] font-bold text-[#e07b00] uppercase tracking-wider font-mono">MISSING INPUTS</span>
+                          <div className="text-lg font-black text-slate-800 mt-0.5">{verificationReport.missingInputs.length}</div>
+                        </div>
+                        <div className="bg-red-50/20 border border-red-150 p-2.5 rounded-xl text-center shadow-xs">
+                          <span className="text-[9px] font-bold text-red-600 uppercase tracking-wider font-mono">CRITICAL FAILURES</span>
+                          <div className="text-lg font-black text-red-800 mt-0.5">{verificationReport.criticalFailures.length}</div>
+                        </div>
+                      </div>
+
+                      {/* Detailed Lists by Severity */}
+                      {(verificationReport.criticalFailures.length > 0 || 
+                        verificationReport.missingInputs.length > 0 || 
+                        verificationReport.warnings.length > 0 || 
+                        verificationReport.infos.length > 0) && (
+                        <div className="space-y-3 bg-white border border-slate-200 p-4 rounded-xl shadow-xs text-xs">
+                          <div className="font-extrabold text-slate-700 uppercase tracking-wider font-mono text-[10px]">
+                            Audit Classification Details
+                          </div>
+
+                          {verificationReport.criticalFailures.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="font-bold text-red-800 uppercase text-[9px] tracking-wider">Critical Failures:</div>
+                              <ul className="list-disc list-inside space-y-1 text-slate-650 bg-red-50/20 border border-red-100 rounded-lg p-2.5 font-semibold leading-relaxed">
+                                {verificationReport.criticalFailures.map((item, idx) => (
+                                  <li key={idx} className="text-red-700">{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {verificationReport.missingInputs.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="font-bold text-slate-700 uppercase text-[9px] tracking-wider font-mono">Missing Inputs:</div>
+                              <ul className="list-disc list-inside space-y-1 text-slate-650 bg-slate-50 border border-slate-150 rounded-lg p-2.5 font-semibold leading-relaxed">
+                                {verificationReport.missingInputs.map((item, idx) => (
+                                  <li key={idx} className="text-slate-650">{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {verificationReport.warnings.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="font-bold text-amber-800 uppercase text-[9px] tracking-wider">Warnings:</div>
+                              <ul className="list-disc list-inside space-y-1 text-slate-650 bg-amber-50/10 border border-amber-100 rounded-lg p-2.5 font-semibold leading-relaxed">
+                                {verificationReport.warnings.map((item, idx) => (
+                                  <li key={idx} className="text-amber-805">{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {verificationReport.infos.length > 0 && (
+                            <div className="space-y-1.5">
+                              <div className="font-bold text-blue-800 uppercase text-[9px] tracking-wider">Info Logs:</div>
+                              <ul className="list-disc list-inside space-y-1 text-slate-650 bg-blue-50/10 border border-blue-100 rounded-lg p-2.5 font-semibold leading-relaxed">
+                                {verificationReport.infos.map((item, idx) => (
+                                  <li key={idx} className="text-blue-805">{item}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Six Verification Nodes Checklist */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1413,7 +1532,8 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                   </Button>
                   <Button
                     onClick={handleAutoFillClick}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold flex items-center justify-center gap-2 shadow rounded-xl py-2 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
+                    disabled={verificationReport ? verificationReport.criticalFailures.length > 0 : false}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold flex items-center justify-center gap-2 shadow rounded-xl py-2 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
                   >
                     <Check className="h-4 w-4 font-black" />
                     Apply Design to Form
