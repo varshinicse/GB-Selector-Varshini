@@ -87,7 +87,8 @@ ${text}
         break; // Success
       } catch (err) {
         console.warn(`Gemini API attempt ${attempts} failed:`, err.message);
-        if (attempts >= maxAttempts) {
+        const errMsg = err.message || "";
+        if (attempts >= maxAttempts || errMsg.includes("API_KEY_INVALID") || errMsg.includes("API key not valid") || err.status === 400 || err.status === 403) {
           throw err;
         }
         await new Promise(resolve => setTimeout(resolve, delay));

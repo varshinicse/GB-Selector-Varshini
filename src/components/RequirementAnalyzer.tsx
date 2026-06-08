@@ -107,6 +107,24 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     fileInputRef.current?.click();
   };
 
+  const timeoutPromise = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error("Timeout"));
+      }, ms);
+      promise.then(
+        (res) => {
+          clearTimeout(timer);
+          resolve(res);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  };
+
   const handleAnalyze = async () => {
     let sourceText = text;
 
@@ -137,9 +155,9 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     try {
       let result: ExtractionResult;
       try {
-        result = await analyzeRequirement(sourceText);
+        result = await timeoutPromise(analyzeRequirement(sourceText), 450);
       } catch (apiError) {
-        console.warn("AI extraction endpoint failed or unavailable. Falling back to local rules engine...", apiError);
+        console.warn("AI extraction endpoint failed, timed out, or unavailable. Falling back to local rules engine...", apiError);
         result = {
           projectName: 'Local Engine Resolution',
           powerKW: null,
@@ -159,6 +177,18 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
       setActiveTab('rec');
       if (file) {
         setUploadStatus("Engineering solution generated successfully!");
+      }
+
+      // Automatically fill the form fields (the "old workflow")
+      if (verification.criticalFailures.length === 0) {
+        onAutoFill({
+          projectName: solution.projectName,
+          powerKW: solution.powerKW.value,
+          inputRPM: solution.inputRPM.value,
+          totalRatio: solution.totalRatio.value,
+          serviceFactor: solution.serviceFactor.value,
+          stages: solution.stages.value,
+        });
       }
     } catch (error) {
       console.error(error);
