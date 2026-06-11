@@ -51,7 +51,7 @@ export const DesignParametersCard: React.FC<DesignParametersCardProps> = ({
   const handleSfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     onChange({
-      serviceFactor: value === '' ? '' as any : parseFloat(value)
+      serviceFactor: value === '' ? '' : parseFloat(value)
     });
   };
 

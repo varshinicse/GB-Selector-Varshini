@@ -1,6 +1,7 @@
 import { gearboxDatabase } from '../data/gearboxDatabase';
 import { seriesData } from '../data/seriesData';
 import { EngineeringReport, seriesLimits } from './engineeringReasoningEngine';
+import { derivationRules } from './derivationEngine';
 
 export interface VerificationCheckNode {
   name: string;
@@ -95,10 +96,28 @@ export function verifyDatabaseIntegrity(): { critical: string[]; warnings: strin
   return { critical, warnings };
 }
 
+export interface RawExtractedParameters {
+  projectName?: string | null;
+  powerKW?: number | null;
+  inputRPM?: number | null;
+  outputRPM?: number | null;
+  targetRatio?: number | null;
+  applicationType?: string | null;
+  serviceFactor?: number | null;
+  numberOfStages?: number | null;
+  motorHP?: number | null;
+  motorPoles?: number | null;
+  dutyType?: string | null;
+  operatingHours?: string | null;
+  loadType?: string | null;
+  environment?: string | null;
+  gearboxPreferences?: string | null;
+}
+
 /**
  * Executes the complete verification audits, categorizing into INFO, WARNING, MISSING INPUT, and CRITICAL
  */
-export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?: any): VerificationReport {
+export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?: RawExtractedParameters): VerificationReport {
   const infos: string[] = [];
   const warnings: string[] = [];
   const missingInputs: string[] = [];
@@ -156,28 +175,42 @@ export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?
   }
 
   // Missing Inputs
-  if (!rawExtracted || rawExtracted.powerKW === null || rawExtracted.powerKW === undefined) {
-    missingInputs.push('Power Rating');
-  }
-  if (!rawExtracted || rawExtracted.inputRPM === null || rawExtracted.inputRPM === undefined) {
-    if (rawExtracted && rawExtracted.motorPoles !== null && rawExtracted.motorPoles !== undefined) {
-      // Speed derived, not missing
-    } else {
-      missingInputs.push('Input Speed (RPM)');
+  let isMissingInputsCritical: boolean;
+  if (report.applicationKnowledge) {
+    isMissingInputsCritical = report.applicationKnowledge.isBlocked;
+    report.applicationKnowledge.blockingMissingParams.forEach(p => {
+      const nameMap: Record<string, string> = {
+        powerKW: 'Power Rating (kW)',
+        inputRPM: 'Input Speed (RPM)',
+        outputRPM: 'Output Speed (RPM)',
+        totalRatio: 'Target Gear Ratio',
+        serviceFactor: 'Service Factor',
+        stages: 'Stages'
+      };
+      missingInputs.push(nameMap[p] || p);
+    });
+  } else {
+    if (!rawExtracted || rawExtracted.powerKW === null || rawExtracted.powerKW === undefined) {
+      missingInputs.push('Power Rating');
     }
+    if (!rawExtracted || rawExtracted.inputRPM === null || rawExtracted.inputRPM === undefined) {
+      if (rawExtracted && rawExtracted.motorPoles !== null && rawExtracted.motorPoles !== undefined) {
+        // Speed derived, not missing
+      } else {
+        missingInputs.push('Input Speed (RPM)');
+      }
+    }
+    if (!hasExtractedOutputRPM) {
+      missingInputs.push('Output RPM');
+    }
+    if (!hasExtractedRatio) {
+      missingInputs.push('Target Ratio');
+    }
+    if (!hasExtractedApp) {
+      missingInputs.push('Application Type');
+    }
+    isMissingInputsCritical = !hasExtractedOutputRPM && !hasExtractedRatio;
   }
-  if (!hasExtractedOutputRPM) {
-    missingInputs.push('Output RPM');
-  }
-  if (!hasExtractedRatio) {
-    missingInputs.push('Target Ratio');
-  }
-  if (!hasExtractedApp) {
-    missingInputs.push('Application Type');
-  }
-
-  // Critical Missing Inputs: if BOTH ratio and outputRPM are missing, cannot calculate drivetrain
-  const isMissingInputsCritical = !hasExtractedOutputRPM && !hasExtractedRatio;
 
   // --- 2. CRITICAL NEGATIVE CHECKS ---
   if (report.powerKW.value < 0) {
@@ -194,20 +227,17 @@ export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?
   }
 
   // --- 3. RECALCULATE & CROSS-VALIDATE PRIMARY VALUES ---
-  let formulaMathPassed = true;
-  let ratioMathPassed = true;
-  let torqueMathPassed = true;
 
   // 1. Verify Power Conversions (HP to kW)
-  if (report.motorHP.value !== null && report.motorHP.value !== undefined) {
+  if (report.motorHP.value !== null && report.motorHP.value !== undefined && report.powerKW.value !== null && report.powerKW.value !== undefined) {
     const recomputedPower = parseFloat((report.motorHP.value * 0.7457).toFixed(2));
     if (report.powerKW.type === 'CALCULATED') {
-      formulaMathPassed = auditVal('Motor Power (HP to kW)', report.powerKW.value, recomputedPower) && formulaMathPassed;
+      auditVal('Motor Power (HP to kW)', report.powerKW.value, recomputedPower);
     }
   }
 
   // 2. Verify Speed from Poles
-  if (report.motorPoles.value !== null && report.motorPoles.value !== undefined && report.inputRPM.type === 'DERIVED') {
+  if (report.motorPoles.value !== null && report.motorPoles.value !== undefined && report.inputRPM.value !== null && report.inputRPM.value !== undefined && report.inputRPM.type === 'DERIVED') {
     const poles = report.motorPoles.value;
     let expectedRPM = 1440;
     if (poles === 2) expectedRPM = 2850;
@@ -215,48 +245,94 @@ export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?
     else if (poles === 6) expectedRPM = 960;
     else if (poles === 8) expectedRPM = 720;
     
-    formulaMathPassed = auditVal('Input Speed from Poles Mapping', report.inputRPM.value, expectedRPM) && formulaMathPassed;
+    auditVal('Input Speed from Poles Mapping', report.inputRPM.value, expectedRPM);
   }
 
   // 3. Verify Ratio calculation (Ratio = InputRPM / OutputRPM)
-  if (report.totalRatio.type === 'CALCULATED') {
+  if (
+    report.totalRatio.type === 'CALCULATED' &&
+    report.inputRPM.value &&
+    report.outputRPM.value &&
+    !isNaN(report.inputRPM.value) &&
+    !isNaN(report.outputRPM.value)
+  ) {
     const expectedRatio = report.inputRPM.value / report.outputRPM.value;
-    ratioMathPassed = auditVal('Total Gear Ratio Calculation', report.totalRatio.value, expectedRatio) && ratioMathPassed;
+    auditVal('Total Gear Ratio Calculation', report.totalRatio.value, expectedRatio);
   }
 
   // 4. Verify Output RPM calculation (OutputRPM = InputRPM / Ratio)
-  if (report.outputRPM.type === 'CALCULATED') {
+  if (
+    report.outputRPM.type === 'CALCULATED' &&
+    report.inputRPM.value &&
+    report.totalRatio.value &&
+    !isNaN(report.inputRPM.value) &&
+    !isNaN(report.totalRatio.value)
+  ) {
     const expectedOutRPM = report.inputRPM.value / report.totalRatio.value;
-    ratioMathPassed = auditVal('Output Speed Speed Resolver', report.outputRPM.value, expectedOutRPM) && ratioMathPassed;
+    auditVal('Output Speed Speed Resolver', report.outputRPM.value, expectedOutRPM);
   }
 
   // 5. Verify Input Torque Math ( T = P * 60000 / 2piN )
-  const expectedTin = (report.powerKW.value * 60000) / (2 * Math.PI * report.inputRPM.value);
-  torqueMathPassed = auditVal('Motor Input Torque', report.inputTorque.result, expectedTin) && torqueMathPassed;
+  let expectedTin = 0;
+  if (
+    report.powerKW.value &&
+    report.inputRPM.value &&
+    !isNaN(report.powerKW.value) &&
+    !isNaN(report.inputRPM.value) &&
+    report.inputRPM.value > 0
+  ) {
+    expectedTin = (report.powerKW.value * 60000) / (2 * Math.PI * report.inputRPM.value);
+    auditVal('Motor Input Torque', report.inputTorque.result, expectedTin);
+  }
+
+  // 6. Verify Engine Rule Derivations (Phase 1)
+  if (report.derivationTraces && report.derivationTraces.length > 0) {
+    for (const trace of report.derivationTraces) {
+      const rule = derivationRules.find(r => r.id === trace.ruleId);
+      if (rule) {
+        try {
+          const recomputed = rule.formula(trace.inputsUsed);
+          if (recomputed !== null && recomputed !== undefined) {
+            auditVal(`${trace.ruleName} (${trace.ruleId})`, trace.value, recomputed);
+          }
+        } catch {
+          criticalFailures.push(`Derivation Audit Error: Failed to recompute rule ${trace.ruleId} (${trace.ruleName}).`);
+        }
+      }
+    }
+  }
 
   // --- 4. STAGE LIMIT VERIFICATION (CRITICAL ONLY IF IMPOSSIBLE CONFIG) ---
   const R_target = report.totalRatio.value;
-  const limits1 = seriesLimits.s1;
-  const limits2 = seriesLimits.s2;
-  const limits3 = seriesLimits.s3;
-  const limits4 = seriesLimits.s4;
+  if (
+    R_target !== null &&
+    R_target !== undefined &&
+    !isNaN(R_target) &&
+    R_target > 0 &&
+    report.stages.value
+  ) {
+    const limits1 = seriesLimits.s1;
+    const limits2 = seriesLimits.s2;
+    const limits3 = seriesLimits.s3;
+    const limits4 = seriesLimits.s4;
 
-  const max1 = limits1.max;
-  const max2 = limits1.max * limits2.max;
-  const max3 = limits1.max * limits2.max * limits3.max;
-  const max4 = limits1.max * limits2.max * limits3.max * limits4.max;
+    const max1 = limits1.max;
+    const max2 = limits1.max * limits2.max;
+    const max3 = limits1.max * limits2.max * limits3.max;
+    const max4 = limits1.max * limits2.max * limits3.max * limits4.max;
 
-  let verifiedMinStages = 1;
-  if (R_target <= max1) verifiedMinStages = 1;
-  else if (R_target <= max2) verifiedMinStages = 2;
-  else if (R_target <= max3) verifiedMinStages = 3;
-  else if (R_target <= max4) verifiedMinStages = 4;
-  else {
-    criticalFailures.push(`Impossible Stage Configuration: Required Gear Ratio (${R_target.toFixed(2)}) exceeds maximum limits of the 4-stage sequencing database (${max4.toFixed(2)}:1).`);
-  }
+    let verifiedMinStages = 1;
+    if (R_target <= max1) verifiedMinStages = 1;
+    else if (R_target <= max2) verifiedMinStages = 2;
+    else if (R_target <= max3) verifiedMinStages = 3;
+    else if (R_target <= max4) verifiedMinStages = 4;
+    else {
+      criticalFailures.push(`Impossible Stage Configuration: Required Gear Ratio (${R_target.toFixed(2)}) exceeds maximum limits of the 4-stage sequencing database (${max4.toFixed(2)}:1).`);
+    }
 
-  if (report.stages.value < verifiedMinStages) {
-    criticalFailures.push(`Impossible Stage Configuration: Selected Stage Count (${report.stages.value}) is insufficient for Ratio (${R_target.toFixed(2)}). Minimum required is ${verifiedMinStages} stage(s).`);
+    if (report.stages.value < verifiedMinStages) {
+      criticalFailures.push(`Impossible Stage Configuration: Selected Stage Count (${report.stages.value}) is insufficient for Ratio (${R_target.toFixed(2)}). Minimum required is ${verifiedMinStages} stage(s).`);
+    }
   }
 
   // --- 5. DRIVETRAIN STAGE-BY-STAGE CALCULATIONS AUDITING ---
@@ -269,14 +345,14 @@ export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?
       
       // Recompute Speed: N_out = N_in / StageRatio
       speed /= trace.ratio;
-      torqueMathPassed = auditVal(`Stage ${i + 1} Output RPM`, trace.speed, speed) && torqueMathPassed;
+      auditVal(`Stage ${i + 1} Output RPM`, trace.speed, speed);
 
       // Recompute Torque: Tout = Tin * Ratio * 0.97
       torque = torque * trace.ratio * 0.97;
-      torqueMathPassed = auditVal(`Stage ${i + 1} Nominal Torque`, trace.nominalTorque, torque) && torqueMathPassed;
+      auditVal(`Stage ${i + 1} Nominal Torque`, trace.nominalTorque, torque);
 
       const recomputedMaxTorque = torque * report.serviceFactor.value;
-      torqueMathPassed = auditVal(`Stage ${i + 1} Maximum Torque`, trace.maxTorque, recomputedMaxTorque) && torqueMathPassed;
+      auditVal(`Stage ${i + 1} Maximum Torque`, trace.maxTorque, recomputedMaxTorque);
 
       // Verify Gearbox Selection capacity constraints
       const gb = trace.selectedGearbox;
@@ -351,10 +427,10 @@ export function verifyEngineeringReport(report: EngineeringReport, rawExtracted?
   const criticalInDb = criticalFailures.some(f => f.toLowerCase().includes('database error') || f.toLowerCase().includes('loading failure'));
   const criticalInGearbox = criticalFailures.some(f => f.toLowerCase().includes('safety factor') || f.toLowerCase().includes('exceeds largest') || f.toLowerCase().includes('impossible stage') || f.toLowerCase().includes('capacity'));
 
-  let inputValScore = criticalInInput ? 0 : 25;
-  let formulaScore = criticalInFormula ? 0 : 25;
-  let dbScore = criticalInDb ? 0 : 25;
-  let selectionScore = criticalInGearbox ? 0 : 25;
+  const inputValScore = criticalInInput ? 0 : 25;
+  const formulaScore = criticalInFormula ? 0 : 25;
+  const dbScore = criticalInDb ? 0 : 25;
+  const selectionScore = criticalInGearbox ? 0 : 25;
 
   const overallScore = inputValScore + formulaScore + dbScore + selectionScore;
 

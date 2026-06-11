@@ -38,18 +38,28 @@ export const StageDetailsModal: React.FC<StageDetailsModalProps> = ({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    let active = true;
     if (isOpen && selectedOption && inputValues) {
-      setLoading(true);
+      Promise.resolve().then(() => {
+        if (active) setLoading(true);
+      });
       getStageDetails(inputValues, selectedOption)
         .then(res => {
-          setDetails(res);
-          setLoading(false);
+          if (active) {
+            setDetails(res);
+            setLoading(false);
+          }
         })
         .catch(err => {
           console.error(err);
-          setLoading(false);
+          if (active) {
+            setLoading(false);
+          }
         });
     }
+    return () => {
+      active = false;
+    };
   }, [isOpen, selectedOption, inputValues]);
 
   return (

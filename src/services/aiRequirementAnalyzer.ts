@@ -1,10 +1,14 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import * as mammoth from 'mammoth';
 
+interface AsyncIterableStream {
+  [Symbol.asyncIterator](): AsyncGenerator<unknown, void, unknown>;
+}
+
 // Polyfill for ReadableStream.prototype[Symbol.asyncIterator] to support Safari browser PDF stream parsing
-if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
-  (ReadableStream.prototype as any)[Symbol.asyncIterator] = async function*() {
-    const reader = this.getReader();
+if (typeof ReadableStream !== 'undefined' && !(ReadableStream.prototype as unknown as AsyncIterableStream)[Symbol.asyncIterator]) {
+  (ReadableStream.prototype as unknown as AsyncIterableStream)[Symbol.asyncIterator] = async function*() {
+    const reader = (this as unknown as ReadableStream).getReader();
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -58,7 +62,7 @@ async function readPdfFile(file: File): Promise<string> {
     arrayBuffer = await file.arrayBuffer();
   } catch (err) {
     console.error("Failed to read PDF file into ArrayBuffer:", err);
-    throw new Error(`Failed to read PDF file: ${(err as Error).message}`);
+    throw new Error(`Failed to read PDF file: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
 
   try {
@@ -73,7 +77,7 @@ async function readPdfFile(file: File): Promise<string> {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
       const pageText = textContent.items
-        .map((item: any) => item.str)
+        .map((item: unknown) => (item as { str: string }).str)
         .join(" ");
       extractedText += pageText + "\n";
     }
@@ -105,7 +109,7 @@ async function readPdfFile(file: File): Promise<string> {
       console.error("PDF fallback parsing also failed:", fallbackError);
     }
     
-    throw new Error(`PDF Parsing failed: ${(error as any).message || error}`);
+    throw new Error(`PDF Parsing failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
 }
 

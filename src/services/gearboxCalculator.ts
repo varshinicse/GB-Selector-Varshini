@@ -12,7 +12,12 @@ export async function calculateGearboxOptions(
   input: ProjectInput,
   numOptions: number = 5
 ): Promise<CalculationResult[]> {
-  const { totalRatio: reqRatio, stages, powerKW: power, inputRPM: rpm, serviceFactor: sf, stageSeries } = input;
+  const reqRatio = Number(input.totalRatio);
+  const stages = input.stages;
+  const power = Number(input.powerKW);
+  const rpm = Number(input.inputRPM);
+  const sf = Number(input.serviceFactor);
+  const stageSeries = input.stageSeries;
 
   if (!reqRatio || !stages || !power || !rpm || !sf || !stageSeries || stageSeries.length < stages) {
     throw new Error("Invalid parameters provided for calculations.");
@@ -89,7 +94,10 @@ export async function getStageDetails(
   input: ProjectInput,
   result: CalculationResult
 ): Promise<StageDetail[]> {
-  const { inputRPM: initialRPM, powerKW: power, serviceFactor: sf, stageSeries } = input;
+  const initialRPM = Number(input.inputRPM);
+  const power = Number(input.powerKW);
+  const sf = Number(input.serviceFactor);
+  const stageSeries = input.stageSeries;
   
   let speed = initialRPM;
   let torque = (power * 60000) / (2 * Math.PI * speed);
@@ -107,12 +115,9 @@ export async function getStageDetails(
 
     const gb = await selectGearbox(seriesVal, torque, maxTorque, idx, ratio);
 
-    let safety = 0;
-    if (gb.nominal / torque <= gb.rated / maxTorque) {
-      safety = gb.nominal / torque;
-    } else {
-      safety = gb.rated / maxTorque;
-    }
+    const safety = gb.nominal / torque <= gb.rated / maxTorque
+      ? gb.nominal / torque
+      : gb.rated / maxTorque;
 
     stageDetails.push({
       stage: idx + 1,

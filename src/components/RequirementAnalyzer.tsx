@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { 
   Upload, FileText, Sparkles, Check, ArrowRight, Cpu, 
   RotateCcw, Info, Settings, CheckCircle, Database,
-  AlertTriangle, Shield, Clipboard, FileDown, Eye
+  AlertTriangle, Shield, Clipboard, FileDown, Eye, Image, Sheet
 } from 'lucide-react';
 import { ProjectInput } from '../types/ProjectInput';
 import { extractTextFromFile } from '../services/aiRequirementAnalyzer';
@@ -20,12 +20,15 @@ import {
   verifyEngineeringReport, 
   VerificationReport 
 } from '../services/verificationEngine';
+import { ExtractionReviewPanel } from './ExtractionReviewPanel';
+import { exportToPDF, exportToExcel } from '../services/reportExportService';
 
 interface RequirementAnalyzerProps {
   onAutoFill: (extractedValues: Partial<ProjectInput>) => void;
+  onReportsReady?: (report: EngineeringReport, verification: VerificationReport, projectName: string) => void;
 }
 
-export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAutoFill }) => {
+export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAutoFill, onReportsReady }) => {
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,6 +37,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
   const [verificationReport, setVerificationReport] = useState<VerificationReport | null>(null);
   const [activeTab, setActiveTab] = useState<'rec' | 'validation' | 'params' | 'trace' | 'limits' | 'verification'>('rec');
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Accordion state for calculation steps
@@ -70,11 +74,11 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
   };
 
   const processSelectedFile = async (selectedFile: File) => {
-    const allowedTypes = ['.txt', '.pdf', '.docx'];
+    const allowedTypes = ['.txt', '.pdf', '.docx', '.jpg', '.jpeg', '.png', '.bmp', '.tiff'];
     const fileExt = selectedFile.name.substring(selectedFile.name.lastIndexOf('.')).toLowerCase();
     
     if (!allowedTypes.includes(fileExt)) {
-      alert("Please upload a valid file format (.txt, .pdf, or .docx)");
+      alert('Please upload a valid file format (.txt, .pdf, .docx, .jpg, .jpeg, .png)');
       return;
     }
 
@@ -82,7 +86,11 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     setText('');
     setReasoningResult(null);
     setVerificationReport(null);
-    setUploadStatus('File uploaded. Click "Analyze Requirement" to extract.');
+    setShowReviewPanel(false);
+    const isImage = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff'].includes(fileExt);
+    setUploadStatus(isImage
+      ? 'Image uploaded. Click "Analyze & Design Drive" for AI visual extraction.'
+      : 'File uploaded. Click "Analyze & Design Drive" to extract.');
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -160,7 +168,8 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
         setUploadStatus("File read successfully. Process starting...");
       } catch (err) {
         console.error(err);
-        alert(`Failed to read file binary: ${(err as any).message}`);
+        const errMsg = err instanceof Error ? err.message : String(err);
+        alert(`Failed to read file binary: ${errMsg}`);
         setLoading(false);
         return;
       }
@@ -201,11 +210,17 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
       setReasoningResult(solution);
       setVerificationReport(verification);
       setActiveTab('rec');
+      setShowReviewPanel(true);
       if (file) {
-        setUploadStatus("Engineering solution generated successfully!");
+        setUploadStatus('Engineering solution generated successfully!');
       }
 
-      // Automatically fill the form fields (the "old workflow")
+      // Notify parent (GearboxSelector) so the Audit Dashboard tab gets populated
+      if (onReportsReady) {
+        onReportsReady(solution, verification, solution.projectName);
+      }
+
+      // Auto-fill the form when there are no critical failures
       if (verification.criticalFailures.length === 0) {
         onAutoFill({
           projectName: solution.projectName,
@@ -218,7 +233,8 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
       }
     } catch (error) {
       console.error(error);
-      alert(`Engineering Reasoning failed: ${(error as any).message}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      alert(`Engineering Reasoning failed: ${errMsg}`);
       if (file) {
         setUploadStatus("Engineering solution failed.");
       }
@@ -233,28 +249,53 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
     setUploadStatus('');
     setReasoningResult(null);
     setVerificationReport(null);
+    setShowReviewPanel(false);
   };
 
   const handleAutoFillClick = () => {
-    if (reasoningResult && reasoningResult.validation.isValid) {
+    if (reasoningResult) {
       if (verificationReport && verificationReport.criticalFailures.length > 0) {
         alert("Action blocked: This drivetrain configuration has failed engineering verification checks. Please check the Verification tab for details.");
         return;
       }
-      onAutoFill({
-        projectName: reasoningResult.projectName,
-        powerKW: reasoningResult.powerKW.value,
-        inputRPM: reasoningResult.inputRPM.value,
-        totalRatio: reasoningResult.totalRatio.value,
-        serviceFactor: reasoningResult.serviceFactor.value,
-        stages: reasoningResult.stages.value,
-      });
-    } else {
-      alert("Drivetrain has invalid parameters. Please review parameters in the Validation panel.");
+      
+      const valuesToFill: Partial<ProjectInput> = {
+        projectName: reasoningResult.projectName
+      };
+      
+      if (reasoningResult.powerKW.value !== null && reasoningResult.powerKW.value !== undefined && !isNaN(reasoningResult.powerKW.value)) {
+        valuesToFill.powerKW = reasoningResult.powerKW.value;
+      }
+      if (reasoningResult.inputRPM.value !== null && reasoningResult.inputRPM.value !== undefined && !isNaN(reasoningResult.inputRPM.value)) {
+        valuesToFill.inputRPM = reasoningResult.inputRPM.value;
+      }
+      if (reasoningResult.totalRatio.value !== null && reasoningResult.totalRatio.value !== undefined && !isNaN(reasoningResult.totalRatio.value)) {
+        valuesToFill.totalRatio = reasoningResult.totalRatio.value;
+      }
+      if (reasoningResult.serviceFactor.value !== null && reasoningResult.serviceFactor.value !== undefined && !isNaN(reasoningResult.serviceFactor.value)) {
+        valuesToFill.serviceFactor = reasoningResult.serviceFactor.value;
+      }
+      if (reasoningResult.stages.value !== null && reasoningResult.stages.value !== undefined && !isNaN(reasoningResult.stages.value)) {
+        valuesToFill.stages = reasoningResult.stages.value;
+      }
+      
+      onAutoFill(valuesToFill);
     }
   };
 
-  // Export printable engineering audit report
+  // PDF export via jsPDF
+  const handleExportPDF = () => {
+    if (!reasoningResult || !verificationReport) return;
+    exportToPDF(reasoningResult, verificationReport, reasoningResult.projectName || 'MAGTORQ Project');
+  };
+
+  // Excel export via SheetJS
+  const handleExportExcel = () => {
+    if (!reasoningResult || !verificationReport) return;
+    exportToExcel(reasoningResult, verificationReport, reasoningResult.projectName || 'MAGTORQ Project');
+  };
+
+  // Legacy browser-print (kept for reference, not exposed in UI)
   const exportAuditReport = () => {
     if (!reasoningResult) return;
 
@@ -272,7 +313,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
 
     const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
 
-    let printHTML = `
+    const printHTML = `
       <!DOCTYPE html>
       <html>
       <head>
@@ -567,6 +608,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
   };
 
   return (
+    <>
     <Card className="bg-white border-t-4 border-[#ff8c00] border-slate-200 shadow-md rounded-2xl overflow-hidden mb-6 transition-all duration-300">
       <CardHeader className="py-4 px-6 border-b border-slate-100 bg-slate-50/50 flex flex-row items-center justify-between">
         <div>
@@ -628,7 +670,7 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                   type="file"
                   ref={fileInputRef}
                   onChange={handleFileChange}
-                  accept=".txt,.pdf,.docx"
+                  accept=".txt,.pdf,.docx,.jpg,.jpeg,.png,.bmp,.tiff"
                   className="hidden"
                 />
                 
@@ -644,12 +686,15 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                   </>
                 ) : (
                   <>
-                    <Upload className="h-7 w-7 text-slate-400 mb-1.5 group-hover:scale-110 transition-transform" />
+                    <div className="flex gap-2 mb-1.5">
+                      <Upload className="h-6 w-6 text-slate-400" />
+                      <Image className="h-6 w-6 text-slate-400" />
+                    </div>
                     <span className="text-sm font-semibold text-slate-600 text-center">
-                      Drag & drop PDF, DOCX, or TXT
+                      Drag &amp; drop PDF, DOCX, TXT, or Image
                     </span>
                     <span className="text-[10px] font-medium text-slate-400 mt-0.5">
-                      Accepts spec sheets, RFQs, enquiries
+                      Accepts spec sheets, RFQs, scanned documents, JPG/PNG
                     </span>
                   </>
                 )}
@@ -782,24 +827,47 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                         /* Case 1: Additional Engineering Inputs Required */
                         <div className="bg-[#ff8c00]/5 border border-[#ff8c00]/30 p-5 rounded-xl text-center space-y-3 shadow-xs">
                           <AlertTriangle className="h-10 w-10 text-[#ff8c00] mx-auto animate-pulse" />
-                          <h4 className="text-md font-bold text-slate-800 uppercase tracking-wide">Additional Engineering Inputs Required</h4>
+                          <h4 className="text-md font-bold text-slate-800 uppercase tracking-wide">
+                            Additional Inputs Required for {reasoningResult.applicationKnowledge?.detectedApplication || reasoningResult.applicationType} Selection
+                          </h4>
                           <p className="text-xs text-slate-650 font-semibold leading-relaxed">
-                            Crucial reduction limits or speeds could not be resolved. Please provide more detailed gearbox operating parameters.
+                            Selection blocked. We detected the application as <strong>{reasoningResult.applicationKnowledge?.detectedApplication || reasoningResult.applicationType}</strong>, but crucial parameters required to finalize the planetary drivetrain design could not be resolved.
                           </p>
-                          <div className="text-left bg-white border border-slate-200 p-3.5 rounded-lg text-xs text-slate-700 space-y-2 max-h-[160px] overflow-y-auto shadow-inner">
-                            <div className="font-extrabold text-slate-800">Missing Parameters:</div>
-                            {verificationReport.missingInputs.map((param, idx) => (
-                              <div key={idx} className="flex items-center gap-1.5 font-bold text-slate-650">
-                                <span className="text-[#ff8c00] font-black">•</span>
-                                <span>{param}</span>
+                          
+                          {/* Clarification Questions Panel */}
+                          <div className="text-left bg-white border border-slate-200 p-4 rounded-xl text-xs text-slate-700 space-y-3 shadow-inner">
+                            <div className="font-extrabold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-2">
+                              <Info className="h-4 w-4 text-[#ff8c00]" />
+                              Engineering Follow-Up Questions:
+                            </div>
+                            
+                            <div className="space-y-3 divide-y divide-slate-50">
+                              {reasoningResult.applicationKnowledge?.clarificationQuestions && reasoningResult.applicationKnowledge.clarificationQuestions.length > 0 ? (
+                                reasoningResult.applicationKnowledge.clarificationQuestions.map((q, idx) => (
+                                  <div key={idx} className="pt-2.5 first:pt-0">
+                                    <p className="font-extrabold text-[#ff8c00] text-[10px] uppercase tracking-wider mb-0.5">
+                                      Question {idx + 1}
+                                    </p>
+                                    <p className="font-semibold text-slate-700 text-xs leading-relaxed">
+                                      {q}
+                                    </p>
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="text-slate-500 font-medium">Please specify motor power and either target speed or gear ratio.</div>
+                              )}
+                            </div>
+                            
+                            {/* Missing Params List */}
+                            <div className="pt-3 border-t border-slate-100 space-y-1">
+                              <div className="font-extrabold text-slate-800 text-[10.5px]">Blocked Parameters:</div>
+                              <div className="flex flex-wrap gap-1.5 pt-1">
+                                {verificationReport.missingInputs.map((param, idx) => (
+                                  <Badge key={idx} className="bg-red-50 text-red-750 border border-red-200 text-[9px] font-black">
+                                    {param}
+                                  </Badge>
+                                ))}
                               </div>
-                            ))}
-                            <div className="pt-2 border-t border-slate-100 font-bold text-slate-700">
-                              Please provide either:
-                              <ul className="list-disc list-inside mt-1 font-semibold text-slate-650 space-y-0.5">
-                                <li>Required Output Speed (RPM)</li>
-                                <li>Required Reduction Ratio (Ratio)</li>
-                              </ul>
                             </div>
                           </div>
                         </div>
@@ -1587,6 +1655,22 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
                     Export Audit Report (PDF)
                   </Button>
                   <Button
+                    className="flex items-center justify-center gap-1.5 border-slate-200 text-slate-600 hover:bg-red-50 hover:border-red-300 hover:text-red-700 font-bold rounded-xl py-2 transition-all duration-200 border"
+                    onClick={handleExportPDF}
+                    title="Export engineering report as PDF"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    PDF
+                  </Button>
+                  <Button
+                    className="flex items-center justify-center gap-1.5 border-slate-200 text-slate-600 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 font-bold rounded-xl py-2 transition-all duration-200 border"
+                    onClick={handleExportExcel}
+                    title="Export engineering report as Excel"
+                  >
+                    <Sheet className="h-4 w-4" />
+                    Excel
+                  </Button>
+                  <Button
                     onClick={handleAutoFillClick}
                     disabled={verificationReport ? verificationReport.criticalFailures.length > 0 : false}
                     className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-extrabold flex items-center justify-center gap-2 shadow rounded-xl py-2 transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0"
@@ -1612,5 +1696,18 @@ export const RequirementAnalyzer: React.FC<RequirementAnalyzerProps> = ({ onAuto
         </div>
       </CardContent>
     </Card>
+
+    {/* Extraction Review Panel — shown below the card after AI analysis */}
+    {showReviewPanel && reasoningResult && (
+      <ExtractionReviewPanel
+        report={reasoningResult}
+        onApply={(overrides) => {
+          onAutoFill(overrides);
+          setShowReviewPanel(false);
+        }}
+        onDismiss={() => setShowReviewPanel(false)}
+      />
+    )}
+    </>
   );
 };
