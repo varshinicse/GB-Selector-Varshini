@@ -205,3 +205,53 @@ describe('VE-3: Safety Factor Audit — Compliant Selection', () => {
     expect(verification.databaseVerification.passed).toBe(true);
   });
 });
+
+// ───────────────────────────────────────────────────
+// Service Factor Conditional Extractions and Audits
+// ───────────────────────────────────────────────────
+describe('Service Factor Condition parsing and calculations', () => {
+  it('should parse and apply "service factor minimum 1.8" and increase the resolved SF', () => {
+    const rawText = '15 kW conveyor. 1440 RPM. Ratio 72. Service factor minimum 1.8.';
+    const report = generateAuditReport(rawText, {
+      projectName: 'SF Condition Min',
+      powerKW: 15,
+      inputRPM: 1440,
+      targetRatio: 72,
+      serviceFactor: null,
+      serviceFactorCondition: null
+    });
+    // Standard conveyor SF is 1.5. A minimum of 1.8 should raise it to 1.8.
+    expect(report.serviceFactor.value).toBe(1.8);
+    expect(report.serviceFactor.reasoning).toContain('increased to 1.8');
+  });
+
+  it('should parse and apply "service factor maximum 1.2" and cap the resolved SF', () => {
+    const rawText = '15 kW conveyor. 1440 RPM. Ratio 72. Service factor maximum 1.2.';
+    const report = generateAuditReport(rawText, {
+      projectName: 'SF Condition Max',
+      powerKW: 15,
+      inputRPM: 1440,
+      targetRatio: 72,
+      serviceFactor: null,
+      serviceFactorCondition: null
+    });
+    // Standard conveyor SF is 1.5. A maximum of 1.2 should cap it at 1.2.
+    expect(report.serviceFactor.value).toBe(1.2);
+    expect(report.serviceFactor.reasoning).toContain('capped to 1.2');
+  });
+
+  it('should parse and apply "service factor less than 1.6" and not cap if Calculated SF is 1.5', () => {
+    const rawText = '15 kW conveyor. 1440 RPM. Ratio 72. Service factor less than 1.6.';
+    const report = generateAuditReport(rawText, {
+      projectName: 'SF Condition Less Than',
+      powerKW: 15,
+      inputRPM: 1440,
+      targetRatio: 72,
+      serviceFactor: null,
+      serviceFactorCondition: null
+    });
+    // Standard conveyor SF is 1.5. Since 1.5 < 1.6, it should remain 1.5.
+    expect(report.serviceFactor.value).toBe(1.5);
+    expect(report.serviceFactor.reasoning).toContain('already satisfies the \'less than 1.6\' condition');
+  });
+});

@@ -915,6 +915,10 @@ export interface ExtractedParameters {
 
   application?: ApplicationType;
 
+  service_factor?: number;
+
+  service_factor_condition?: 'less than' | 'greater than' | 'equal to' | 'minimum' | 'maximum' | null;
+
   raw_text: string;
 }
 
@@ -1077,6 +1081,34 @@ export class ParameterExtractionEngine {
     //////////////////////////////////////////////////
     // APPLICATION
     //////////////////////////////////////////////////
+
+    const sfCondRegex = /(?:service\s+factor|SF|factor)\s+(?:is\s+|of\s+)?(less\s+than|greater\s+than|equal\s+to|minimum|maximum|min\b|max\b|<=|>=|<|>|=)\s*(?:is\s+|of\s+)?(\d+(?:\.\d+)?)/i;
+    const sfCondMatch = text.match(sfCondRegex);
+
+    if (sfCondMatch) {
+      const condRaw = sfCondMatch[1].toLowerCase();
+      let condition: 'less than' | 'greater than' | 'equal to' | 'minimum' | 'maximum' | null = null;
+      if (condRaw === 'less than' || condRaw === '<' || condRaw === '<=') {
+        condition = 'less than';
+      } else if (condRaw === 'greater than' || condRaw === '>' || condRaw === '>=') {
+        condition = 'greater than';
+      } else if (condRaw === 'equal to' || condRaw === '=') {
+        condition = 'equal to';
+      } else if (condRaw === 'minimum' || condRaw === 'min') {
+        condition = 'minimum';
+      } else if (condRaw === 'maximum' || condRaw === 'max') {
+        condition = 'maximum';
+      }
+      result.service_factor_condition = condition;
+      result.service_factor = parseFloat(sfCondMatch[2]);
+    } else {
+      const sfSimpleRegex = /(?:service\s+factor|SF|factor)\s+(?:of|is\s+)?(\d+(?:\.\d+)?)/i;
+      const sfSimpleMatch = text.match(sfSimpleRegex);
+      if (sfSimpleMatch) {
+        result.service_factor = parseFloat(sfSimpleMatch[1]);
+        result.service_factor_condition = null;
+      }
+    }
 
     result.application = ApplicationDetectionEngine.detect(text);
 

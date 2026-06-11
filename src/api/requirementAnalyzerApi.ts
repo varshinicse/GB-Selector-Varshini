@@ -7,6 +7,7 @@ export interface ExtractionResult {
   applicationType: string | null;
   serviceFactor: number | null;
   numberOfStages: number | null;
+  serviceFactorCondition?: string | null;
 }
 
 /**

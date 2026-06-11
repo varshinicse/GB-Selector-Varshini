@@ -321,6 +321,7 @@ export function generateAuditReport(
     loadType?: string | null;
     environment?: string | null;
     gearboxPreferences?: string | null;
+    serviceFactorCondition?: string | null;
   }
 ): EngineeringReport {
   const normText = rawText.toLowerCase();
@@ -695,7 +696,65 @@ export function generateAuditReport(
     startsPerHour = parseInt(startsMatch[1], 10);
   }
 
-  if (resolved.serviceFactor !== undefined && resolved.serviceFactor !== null) {
+  const sfTargetVal = localExtracted.service_factor !== undefined ? localExtracted.service_factor : (extracted.serviceFactor !== null && extracted.serviceFactor !== undefined ? extracted.serviceFactor : null);
+  const sfCondition = localExtracted.service_factor_condition !== undefined ? localExtracted.service_factor_condition : (extracted.serviceFactorCondition || null);
+
+  if (sfTargetVal !== null && sfCondition) {
+    let baseSF = 1.5;
+    let baseSFFormula = 'N/A';
+    let baseSFSteps = '';
+
+    if (resolved.serviceFactor !== undefined && resolved.serviceFactor !== null) {
+      baseSF = resolved.serviceFactor;
+      const trace = derivationResult.traces.find(t => t.outputProduced.startsWith('serviceFactor'));
+      if (trace) {
+        baseSFFormula = trace.formulaUsed;
+        baseSFSteps = trace.outputProduced;
+      }
+    } else {
+      baseSF = ServiceFactorEngine.calculate(
+        applicationType,
+        dutyHours,
+        startsPerHour,
+        localExtracted.temperature_c !== undefined ? `temp-${localExtracted.temperature_c}` : undefined
+      );
+      baseSFFormula = `ServiceFactorEngine.calculate(${applicationType}, ${dutyHours} hrs, ${startsPerHour} starts)`;
+      baseSFSteps = `Calculated SF = ${baseSF}`;
+    }
+
+    resolvedSF = baseSF;
+    sfType = 'CALCULATED';
+    sfSource = 'Service Factor Condition Resolver';
+
+    if (sfCondition === 'greater than' || sfCondition === 'minimum') {
+      if (baseSF < sfTargetVal) {
+        resolvedSF = sfTargetVal;
+        sfFormula = `SF = max(Calculated SF ${baseSF}, Minimum Target ${sfTargetVal})`;
+        sfSteps = `max(${baseSF}, ${sfTargetVal}) = ${resolvedSF}`;
+        sfReasoning = `Standard calculated service factor of ${baseSF} was increased to ${resolvedSF} to satisfy the '${sfCondition} ${sfTargetVal}' condition specified in requirements.`;
+      } else {
+        sfFormula = `SF = max(Calculated SF ${baseSF}, Minimum Target ${sfTargetVal})`;
+        sfSteps = `max(${baseSF}, ${sfTargetVal}) = ${resolvedSF}`;
+        sfReasoning = `Standard calculated service factor of ${baseSF} was kept because it already satisfies the '${sfCondition} ${sfTargetVal}' condition.`;
+      }
+    } else if (sfCondition === 'less than' || sfCondition === 'maximum') {
+      if (baseSF > sfTargetVal) {
+        resolvedSF = sfTargetVal;
+        sfFormula = `SF = min(Calculated SF ${baseSF}, Maximum Target ${sfTargetVal})`;
+        sfSteps = `min(${baseSF}, ${sfTargetVal}) = ${resolvedSF}`;
+        sfReasoning = `Standard calculated service factor of ${baseSF} was capped to ${resolvedSF} to satisfy the '${sfCondition} ${sfTargetVal}' condition specified in requirements.`;
+      } else {
+        sfFormula = `SF = min(Calculated SF ${baseSF}, Maximum Target ${sfTargetVal})`;
+        sfSteps = `min(${baseSF}, ${sfTargetVal}) = ${resolvedSF}`;
+        sfReasoning = `Standard calculated service factor of ${baseSF} was kept because it already satisfies the '${sfCondition} ${sfTargetVal}' condition.`;
+      }
+    } else if (sfCondition === 'equal to') {
+      resolvedSF = sfTargetVal;
+      sfFormula = `SF = ${sfTargetVal}`;
+      sfSteps = `SF = ${resolvedSF}`;
+      sfReasoning = `Service factor set to ${resolvedSF} to satisfy the 'equal to ${sfTargetVal}' condition specified in requirements.`;
+    }
+  } else if (resolved.serviceFactor !== undefined && resolved.serviceFactor !== null) {
     resolvedSF = resolved.serviceFactor;
     sfReasoning = `Resolved service factor of ${resolvedSF}.`;
     const trace = derivationResult.traces.find(t => t.outputProduced.startsWith('serviceFactor'));

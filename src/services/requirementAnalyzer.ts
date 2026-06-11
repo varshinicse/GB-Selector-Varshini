@@ -46,9 +46,29 @@ export async function analyzeRequirementText(text: string): Promise<Partial<Proj
   }
 
   // 4. Extract Service Factor
-  const sfMatch = text.match(/(?:service\s+factor|SF|factor)\s+(?:of|is\s+)?(\d+(?:\.\d+)?)/i);
-  if (sfMatch) {
-    serviceFactor = parseFloat(sfMatch[1]);
+  let serviceFactorCondition: string | null = null;
+  const sfCondRegex = /(?:service\s+factor|SF|factor)\s+(?:is\s+|of\s+)?(less\s+than|greater\s+than|equal\s+to|minimum|maximum|min\b|max\b|<=|>=|<|>|=)\s*(?:is\s+|of\s+)?(\d+(?:\.\d+)?)/i;
+  const sfCondMatch = text.match(sfCondRegex);
+
+  if (sfCondMatch) {
+    const condRaw = sfCondMatch[1].toLowerCase();
+    if (condRaw === 'less than' || condRaw === '<' || condRaw === '<=') {
+      serviceFactorCondition = 'less than';
+    } else if (condRaw === 'greater than' || condRaw === '>' || condRaw === '>=') {
+      serviceFactorCondition = 'greater than';
+    } else if (condRaw === 'equal to' || condRaw === '=') {
+      serviceFactorCondition = 'equal to';
+    } else if (condRaw === 'minimum' || condRaw === 'min') {
+      serviceFactorCondition = 'minimum';
+    } else if (condRaw === 'maximum' || condRaw === 'max') {
+      serviceFactorCondition = 'maximum';
+    }
+    serviceFactor = parseFloat(sfCondMatch[2]);
+  } else {
+    const sfSimpleMatch = text.match(/(?:service\s+factor|SF|factor)\s+(?:of|is\s+)?(\d+(?:\.\d+)?)/i);
+    if (sfSimpleMatch) {
+      serviceFactor = parseFloat(sfSimpleMatch[1]);
+    }
   }
 
   // 5. Extract stages if mentioned e.g. "3 stages" or "2-stage"
@@ -65,6 +85,7 @@ export async function analyzeRequirementText(text: string): Promise<Partial<Proj
     totalRatio: totalRatio ?? 100,
     stages: stages ?? 2,
     serviceFactor: serviceFactor ?? 1.5,
+    serviceFactorCondition,
   };
 }
 
